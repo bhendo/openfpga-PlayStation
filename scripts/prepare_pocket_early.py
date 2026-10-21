@@ -252,6 +252,7 @@ def main():
     parser.add_argument('--mid-slot-384', action='store_true', help='With --scaler-slots (not --wide-lines): the 368-wide scaler slots are 384 wide, so a 368-mode picture with a wide display range (Ape Escape PAL, 384x240) fills its slot instead of going padded into 512 (psx_apf_video MID_W; package --mid-slot-384)')
     parser.add_argument('--vs-on-hs', action='store_true', help='With --scaler-slots: VS goes out with the next HS start, so both 480i fields reach the APF scaler with the same VS timing (psx_apf_video / psx_apf_video_wide VS_ON_HS; the GPU puts one field\'s vsync mid-line)')
     parser.add_argument('--lead-line', action='store_true', help='With --scaler-slots: one black line after each VS (psx_apf_video LEAD_LINE, Video test D fixed; psx_apf_video_wide LEAD_LINE with --wide-lines): the APF scaler drops the first line of a frame, which cost the top line and left a stale bottom row (stray row, 2026-10-16)')
+    parser.add_argument('--even-lines', action='store_true', help='With --wide-lines --lead-line --vs-on-hs: the lead line goes out only in 480i, and a frame or field with an odd number of lines ends with one black pad line, so every count is even (psx_apf_video_wide LEAD_LINE 2 and EVEN_LINES): with an odd count (the lead line and 240) the APF scaler left the end of a top row unwritten from power-on (red line, issue #5, 2026-10-21)')
     parser.add_argument('--video-test-setting', action='store_true', help='Diagnostic builds only, with --scaler-slots: Settings list "Video test" (bridge 0x5000004C) switching the APF frame start (VS at vblank or PSX vsync, with or without a black lead line; psx_apf_video VIDEO_TEST; package --video-test-setting)')
     parser.add_argument('--wide-lines', action='store_true', help='With --scaler-slots: stretch every line to 640 pixels (rtl/pocket/psx_apf_video_wide.sv) so scaler slots only differ by height: 640x240, 640x480, 640x288 (package --wide-lines)')
     parser.add_argument('--hybrid-slots', action='store_true', help='With --wide-lines: keep native 320/256 (and 512 at 240 lines) slots and stretch only other widths (psx_apf_video_wide HYBRID; package --hybrid-slots)')
@@ -1509,6 +1510,8 @@ CHIP_CLOCK_PINS""" + text[end:]
         parser.error('--fill-detect needs --dbl-320 with --fit-368 (Stretch 480i then shares the Fit 640x480 slot)')
     if args.overscan_setting and not args.wide_lines:
         parser.error('--overscan-setting needs --wide-lines')
+    if args.even_lines and not (args.wide_lines and args.lead_line and args.vs_on_hs):
+        parser.error('--even-lines needs --wide-lines --lead-line --vs-on-hs')
     if args.vs_on_hs and (args.vs_at_vblank or not args.scaler_slots):
         parser.error('--vs-on-hs needs --scaler-slots, without --vs-at-vblank')
     if args.slot6_368 and not (args.pal288 and args.slots480 and args.scaler_slots and not args.wide_lines):
@@ -1908,7 +1911,7 @@ CHIP_CLOCK_PINS""" + text[end:]
             if used: parser.error(f'{flag} has no effect with --wide-lines (psx_apf_video_wide)')
         start = text.find('psx_apf_video #('); end = text.find(') apf_video (', start)
         if start < 0 or end < 0 or text.count('psx_apf_video #(') != 1: parser.error('--wide-lines: psx_apf_video instance not found')
-        params = (['.INTERLACE_FEATURE(1)'] if args.interlace_feature else []) + (['.FIELD_INVERT(1)'] if args.field_invert else []) + (['.PAL288(1)'] if args.pal288 else []) + (['.HYBRID(1)'] if args.hybrid_slots else []) + (['.LEAD_LINE(1)'] if args.lead_line else []) + (['.VS_ON_HS(1)'] if args.vs_on_hs else []) + (['.ASPECT(1)', '.PAL_TIMING(1)'] if args.aspect_setting else []) + (['.CROP_LINES(1)'] if args.crop_lines else []) + (['.VIDEO_PROBE(1)'] if args.video_probe else []) + (['.SLOT368(1)'] if args.fit_368 else []) + (['.DBL320(1)'] if args.dbl_320 else []) + (['.FILL_DETECT(1)'] if args.fill_detect else []) + (['.OVERSCAN_BLANK(1)'] if args.overscan_setting else [])
+        params = (['.INTERLACE_FEATURE(1)'] if args.interlace_feature else []) + (['.FIELD_INVERT(1)'] if args.field_invert else []) + (['.PAL288(1)'] if args.pal288 else []) + (['.HYBRID(1)'] if args.hybrid_slots else []) + (['.LEAD_LINE(2)' if args.even_lines else '.LEAD_LINE(1)'] if args.lead_line else []) + (['.VS_ON_HS(1)'] if args.vs_on_hs else []) + (['.ASPECT(1)', '.PAL_TIMING(1)'] if args.aspect_setting else []) + (['.CROP_LINES(1)'] if args.crop_lines else []) + (['.VIDEO_PROBE(1)'] if args.video_probe else []) + (['.SLOT368(1)'] if args.fit_368 else []) + (['.DBL320(1)'] if args.dbl_320 else []) + (['.FILL_DETECT(1)'] if args.fill_detect else []) + (['.OVERSCAN_BLANK(1)'] if args.overscan_setting else []) + (['.EVEN_LINES(1)'] if args.even_lines else [])
         text = text[:start] + 'psx_apf_video_wide #(' + ', '.join(params or ['.PAL288(0)']) + text[end:]
         if args.aspect_setting:
             # "Aspect Ratio" list (interact.json, bridge 0x50000048, value from any

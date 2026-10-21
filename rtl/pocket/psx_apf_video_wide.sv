@@ -26,6 +26,17 @@
 // and before), a lead line at 640 with CE slower than every 4 clocks (320,
 // 368, 512 or 256 lines in Stretch, PAL, 368/512 in Fit) took up to 6,400
 // clocks and stayed in DE across the next HS (a line is 3,413).
+// LEAD_LINE 2: the lead line goes out only in 480i. Progressive frames keep
+// their first line now that VS and HS are apart (VS_ON_HS), but 480i fields
+// still lose it (stray bottom row without the lead line, 2026-10-21).
+// EVEN_LINES: every frame or field sends an even number of DE lines. After
+// vblank starts, the line after the frame's last picture line is a black
+// pad line (the previous line's slot and width) when the lines since VS
+// are odd, so 480i fields with the lead line send 242, PAL included. With an
+// odd count (0.5.5: the lead line and 240 lines) the APF scaler leaves the
+// last 128 pixels of a top row unwritten from power-on (red line, issue #5,
+// 2026-10-21). The fixed vblank windows end 5 or more lines before vsync;
+// a pad still pending at VS is dropped, as it would count in the next frame.
 // A line within 1/16 below a native width (320/256, and 512 at 240 lines)
 // is sent at that width, centred with black; a line of 321-360 pixels is
 // centre-cropped to 320 (FFVII's title is a little over 320 and was
@@ -93,7 +104,7 @@ module psx_apf_video_wide #(parameter integer INTERLACE_FEATURE=0, parameter int
     parameter integer VS_ON_HS=0, parameter integer ASPECT=0, parameter integer CROP_LINES=0,
     parameter integer PAL_TIMING=0, parameter integer VIDEO_PROBE=0, parameter integer SLOT368=0,
     parameter integer DBL320=0, parameter integer FILL_DETECT=0,
-    parameter integer OVERSCAN_BLANK=0) (
+    parameter integer OVERSCAN_BLANK=0, parameter integer EVEN_LINES=0) (
     input wire clk, ce,
     input wire hsync, vsync, hblank, vblank, interlace, blank, weave,
     input wire field_swap,
@@ -163,6 +174,7 @@ module psx_apf_video_wide #(parameter integer INTERLACE_FEATURE=0, parameter int
 
     // Read side: DDA over the source width
     reg rd_on=0, rd_d=0, out_d=0, native=0, pix_d=0, lead_pend=0, black=0;
+    reg vblank_d=0, pad_pend=0, de_odd=0;   // EVEN_LINES: de_odd = odd lines since VS
     reg dbl=0, ph=0;   // dbl: each source pixel twice (ph: the second copy)
     reg [10:0] pw=0;   // picture width in output pixels
     reg [9:0] oi=0, s=0, acc=0;
@@ -207,10 +219,18 @@ module psx_apf_video_wide #(parameter integer INTERLACE_FEATURE=0, parameter int
         end
 
         // read
-        if (LEAD_LINE!=0 && vs_edge) lead_pend<=1;
+        if (LEAD_LINE!=0 && vs_edge) lead_pend<=LEAD_LINE==1 || mode480i;
         if (LEAD_LINE!=0 && lead_pend && hs_end && !pend) begin
             lead_pend<=0; rd_on<=1; oi<=0; black<=1;   // black lead line, previous slot and width
         end
+        vblank_d<=vblank;
+        if (EVEN_LINES!=0 && vblank && !vblank_d) pad_pend<=1;
+        if (EVEN_LINES!=0 && pad_pend && hs_end && !pend) begin
+            pad_pend<=0;
+            if (de_odd) begin rd_on<=1; oi<=0; black<=1; end   // black pad line, as the lead line
+        end
+        if (vs_edge) pad_pend<=0;
+        if (EVEN_LINES!=0) de_odd<=(vs_edge ? 1'b0 : de_odd)^(rd_on && !rd_d);
         if (pend && hs_end) begin
             pend<=0; rd_on<=1; oi<=0; acc<=0; black<=0;
             slot<=slot_next; out_w<=w_next; native<=native_next;
